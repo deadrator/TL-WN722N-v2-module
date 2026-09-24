@@ -85,16 +85,67 @@ find_modfw() {
   return 1
 }
 
-# 2) Does the adapter have a network interface? Checked under the adapter's own
-#    sysfs interfaces ("3-2:1.0/net/wlanX") so the phone's internal wlan0 never
-#    causes a false "already up" result.
+# 2) Does the adapter have a network interface? Checked under the adapter's
+#    own sysfs interfaces ("3-2:1.0/net/wlanX") so the phone's internal wlan0
+#    never causes a false "already up" result. Interface dirs are named
+#    "<port>:<config>.<alt>", e.g. "2-1:1.0".
 adapter_if_up() {
-  ADAPTER=$1
-  ls -d "$ADAPTER":*/net/* >/dev/null 2>&1
+  for ifd in "$1":*/; do
+    [ -d "$ifd" ] || continue
+    for n in "${ifd}net/"*; do
+      [ -e "$n" ] && return 0
+    done
+  done
+  return 1
 }
 
 # 3) If the adapter is present but has no interface, re-probe it now that
 #    the firmware is in place. Several mechanisms, first one that works wins.
+#
+#    Note: a wifi driver may be loaded but lack the TP-Link ID 2357:010c in
+#    its usb_device_id table (older kernels). new_id is the standard sysfs
+#    way to make a driver claim a device it does not know about.
+
+# Try to load the RTL8188EUS driver if the kernel ships it but did not
+# autoload it (vendor kernels often only load their own wifi modules).
+# modprobe resolves dependencies; insmod as fallback.
+load_wifi_module() {
+  grep -qiE "^(rtl8xxxu|8xxxu|r8188eu) " /proc/modules 2>/dev/null && return 0
+  for m in /system/lib/modules /vendor/lib/modules /odm/lib/modules \
+           /vendor_dlkm/lib/modules /system_dlkm/lib/modules; do
+    [ -d "$m" ] || continue
+    for k in "$m"/rtl8xxxu.ko "$m"/*8xxxu*.ko "$m"/r8188eu.ko "$m"/*8188eu*.ko; do
+      [ -f "$k" ] || continue
+      if command -v modprobe >/dev/null 2>&1; then
+        modprobe "$(basename "$k" .ko)" 2>/dev/null \
+          && grep -qiE "^(rtl8xxxu|8xxxu|r8188eu) " /proc/modules 2>/dev/null && return 0
+      fi
+      insmod "$k" 2>/dev/null \
+        && grep -qiE "^(rtl8xxxu|8xxxu|r8188eu) " /proc/modules 2>/dev/null && return 0
+    done
+  done
+  return 1
+}
+
+try_new_id() {
+  V=$(cat "$ADAPTER/idVendor" 2>/dev/null)
+  P=$(cat "$ADAPTER/idProduct" 2>/dev/null)
+  [ -n "$V" ] && [ -n "$P" ] || return 1
+  for drv in rtl8xxxu r8188eu; do
+    # must be loaded to accept new_id
+    grep -q "^$drv " /proc/modules 2>/dev/null || continue
+    # don't re-add a dynamic ID on every boot
+    grep -qi "$V $P" /sys/bus/usb/drivers/$drv/new_id 2>/dev/null && continue
+    echo "$V $P" > /sys/bus/usb/drivers/$drv/new_id 2>/dev/null || continue
+    sleep 3
+    if adapter_if_up "$ADAPTER"; then
+      log "$drv claimed $V:$P via new_id"
+      return 0
+    fi
+  done
+  return 1
+}
+
 reprobe_if_needed() {
   ADAPTER=$(find_adapter) || return 0
   DEVNAME=$(basename "$ADAPTER")
@@ -106,21 +157,30 @@ reprobe_if_needed() {
   log "adapter $DEVNAME present without interface; re-probing"
 
   # a) ask the kernel to (re)probe the device: drivers_probe expects the sysfs
-  #    device name (e.g. "3-2")
+  #    device name (e.g. "3-2"). Also probe unbound interfaces directly.
   echo "$DEVNAME" > /sys/bus/usb/drivers_probe 2>/dev/null
+  for ifd in "$ADAPTER":*/; do
+    [ -d "$ifd" ] || continue
+    echo "${ifd%/}" > /sys/bus/usb/drivers_probe 2>/dev/null
+  done
   sleep 2
   if adapter_if_up "$ADAPTER"; then log "re-probe succeeded"; return 0; fi
 
-  # b) de-authorize + re-authorize (re-enumerates the device)
+  # b) wifi driver shipped but not loaded, or loaded but missing this USB ID?
+  load_wifi_module
+  if try_new_id; then return 0; fi
+
+  # c) de-authorize + re-authorize (re-enumerates the device)
   echo 0 > "$ADAPTER/authorized" 2>/dev/null
   sleep 1
   echo 1 > "$ADAPTER/authorized" 2>/dev/null
   sleep 2
   if adapter_if_up "$ADAPTER"; then log "re-authorization succeeded"; return 0; fi
 
-  # c) last resort: unbind/bind whatever driver claimed the device
+  # d) last resort: unbind/bind whatever driver claimed the device. A plain
+  #    "usb" binding is the generic core driver - skip it, it cannot bind.
   DRV=$(basename "$(readlink "$ADAPTER/driver" 2>/dev/null)" 2>/dev/null)
-  if [ -n "$DRV" ] && [ -d "/sys/bus/usb/drivers/$DRV" ]; then
+  if [ -n "$DRV" ] && [ "$DRV" != "usb" ] && [ -d "/sys/bus/usb/drivers/$DRV" ]; then
     echo "$DEVNAME" > "/sys/bus/usb/drivers/$DRV/unbind" 2>/dev/null
     sleep 1
     V=$(cat "$ADAPTER/idVendor" 2>/dev/null)

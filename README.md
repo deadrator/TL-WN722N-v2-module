@@ -59,6 +59,16 @@ in - it verifies placement, driver binding, and shows recent kernel log lines.
 
 #### Changelog
 
+* v2.1.2
+    - nhwifi-check: distinguishes generic "usb" core binding from a real wifi
+      driver on the USB interface, and reports whether an rtl8xxxu / r8188eu
+      module is loaded or present in /system|/vendor|/odm lib/modules
+    - service.sh: if the kernel ships an rtl8xxxu / r8188eu module that was
+      not autoloaded, it is insmodded at boot; if a loaded driver does not
+      know the adapter's USB ID, it is offered via driver `new_id` (old
+      kernels often lack 2357:010c in their ID tables); interface-level
+      drivers_probe added
+
 * v2.1.1
     - TL-WN722N v2/v3: also detect TP-Link-branded USB ID `2357:010c` in
       service.sh and nhwifi-check (units enumerating as TP-Link, not generic

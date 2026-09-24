@@ -1,6 +1,6 @@
 id=wirelessFirmware
 name=Wireless Firmware for Nethunter
-version=v2.1.1
-versionCode=2101
+version=v2.1.2
+versionCode=2102
 author=rithvikvibhu
 description=This module adds the required firmware for external wireless adapters to be used with NetHunter.

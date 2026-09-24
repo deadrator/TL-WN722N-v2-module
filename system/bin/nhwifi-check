@@ -74,29 +74,69 @@ P=$(cat "$ADAPTER/idProduct" 2>/dev/null)
 echo "[ OK ] adapter found at /sys/bus/usb/devices/$DEVNAME ($V:$P)"
 hr
 
-# 3) Did a driver bind and create an interface?
+# 3) Driver binding. The wifi driver (rtl8xxxu / r8188eu) binds to the USB
+#    *interface* (2-1:1.0). A "usb" driver on the device node itself is just
+#    the generic USB core and does NOT mean a wifi driver claimed it.
 DRV=$(basename "$(readlink "$ADAPTER/driver" 2>/dev/null)" 2>/dev/null)
 IFACE=""
-for d in "$ADAPTER":*/net/*/; do
+IFDRV=""
+for d in "$ADAPTER":*/; do
   [ -d "$d" ] || continue
-  IFACE=$(basename "$d")
-  break
+  IFN=$(basename "$d")
+  D=$(basename "$(readlink "${d}driver" 2>/dev/null)" 2>/dev/null)
+  [ -n "$D" ] && IFDRV="$IFDRV $IFN:$D"
+  if [ -z "$IFACE" ]; then
+    for n in "${d}net/"*; do
+      [ -e "$n" ] || continue
+      IFACE=$(basename "$n")
+      break
+    done
+  fi
 done
-if [ -n "$DRV" ]; then
-  echo "[ OK ] driver bound: $DRV"
+if [ -n "$DRV" ] && [ "$DRV" != "usb" ]; then
+  echo "[ OK ] device driver: $DRV"
+elif [ -n "$DRV" ]; then
+  echo "[ .. ] device driver: usb (generic USB core - no wifi driver bound)"
 else
   echo "[FAIL] no driver bound to the device"
 fi
 if [ -n "$IFACE" ]; then
   echo "[ OK ] interface created: $IFACE"
+elif [ -n "$IFDRV" ]; then
+  echo "[FAIL] wifi driver bound ($IFDRV ) but no net interface - see dmesg below"
 else
   echo "[FAIL] no network interface under $DEVNAME"
 fi
 hr
 
-# 4) Kernel log: firmware load errors are shown here verbatim.
-echo "Recent kernel messages (rtl8xxxu / r8188eu / firmware):"
-dmesg 2>/dev/null | grep -iE "8188|rtl8xxxu|r8188eu|firmware" | tail -n 20 \
+# 3b) Is a wifi driver module available at all? The firmware module cannot
+#     add driver support - this only exists if the kernel/kernel vendor
+#     shipped it.
+LOADED=$(grep -iE "rtl8xxxu|8xxxu|r8188eu|8188eu" /proc/modules 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+if [ -n "$LOADED" ]; then
+  echo "[ OK ] module loaded: $LOADED"
+fi
+FOUND_MOD=""
+for m in /system/lib/modules /vendor/lib/modules /odm/lib/modules /system/lib64/modules /vendor/lib64/modules; do
+  [ -d "$m" ] || continue
+  HIT=$(ls "$m" 2>/dev/null | grep -iE "8xxxu|8188eu" | head -n 3)
+  if [ -n "$HIT" ]; then
+    echo "[ OK ] module present in $m:"
+    echo "$HIT" | sed "s/^/         /"
+    FOUND_MOD=1
+  fi
+done
+if [ -z "$FOUND_MOD" ] && [ -z "$LOADED" ]; then
+  echo "[FAIL] no rtl8xxxu / r8188eu module in /system|/vendor|/odm lib/modules"
+  echo "       and none loaded - this kernel has NO RTL8188EUS driver."
+  echo "       Firmware alone cannot fix this; a kernel with driver support is"
+  echo "       required (e.g. a NetHunter kernel for this device)."
+fi
+hr
+
+# 4) Kernel log for this device + driver probe attempts.
+echo "Recent kernel messages (adapter / rtl8xxxu / r8188eu):"
+dmesg 2>/dev/null | grep -iE "rtl8xxxu|r8188eu|8188|usb $DEVNAME:" | tail -n 20 \
   || echo "(dmesg unavailable - run as root)"
 hr
 
@@ -109,7 +149,10 @@ echo "RESULT: adapter detected but not working."
 echo "Checklist:"
 echo "  1. Kernel must support rtl8xxxu (or r8188eu) + USB host. This module"
 echo "     only provides firmware - it cannot add driver support."
-echo "  2. Reboot once after installing the module so service.sh re-probes."
+echo "  2. If section 3b shows a module, force a match (the ID table may lack"
+echo "     the TP-Link pair) and reboot first so service.sh can auto-do it:"
+echo "       echo '$V $P' > /sys/bus/usb/drivers/rtl8xxxu/new_id"
+echo "       (use the module name found in 3b; r8188eu also exists)"
 echo "  3. Firmware load errors above mean the file was not found: make sure"
 echo "     Magisk mounted the module (magisk --path; ls /data/adb/modules)."
 exit 1
