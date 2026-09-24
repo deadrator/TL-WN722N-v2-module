@@ -30,7 +30,9 @@ This module should work with any variant of Nethunter, but it was created to wor
 #### TL-WN722N v2/v3 notes (RTL8188EUS)
 
 The v2/v3 hardware uses a completely different chipset than v1 (Realtek RTL8188EUS,
-USB ID `0bda:8179`, vs the Atheros AR9271 in v1). It needs `rtlwifi/rtl8188eufw.bin`,
+vs the Atheros AR9271 in v1). Most units enumerate as the generic Realtek USB ID
+`0bda:8179`, but some (notably v3) ship with TP-Link's own pair `2357:010c` —
+both are the same RTL8188EUS hardware. It needs `rtlwifi/rtl8188eufw.bin`,
 which is the exact path requested by both kernel drivers that support it:
 
 - `rtl8xxxu` (mainline since 6.3, the driver NetHunter uses)
@@ -56,6 +58,11 @@ in - it verifies placement, driver binding, and shows recent kernel log lines.
 
 
 #### Changelog
+
+* v2.1.1
+    - TL-WN722N v2/v3: also detect TP-Link-branded USB ID `2357:010c` in
+      service.sh and nhwifi-check (units enumerating as TP-Link, not generic
+      Realtek `0bda:8179`, were previously reported as "not plugged in")
 
 * v2.1.0
     - TL-WN722N v2/v3: updated rtl8188eufw.bin to linux-firmware v28.0 (fixes rtl8xxxu monitor mode)

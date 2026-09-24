@@ -9,7 +9,7 @@ MODDIR=${0%/*}
 # This script will be executed in late_start service mode
 
 ##########################################################################################
-# TL-WN722N v2/v3 guard (Realtek RTL8188EUS, USB ID 0bda:8179)
+# TL-WN722N v2/v3 guard (Realtek RTL8188EUS, USB IDs 0bda:8179 / 2357:010c)
 #
 # Ensures the firmware is placed where the kernel can load it and, if the driver
 # already probed before the module overlay was visible, re-probes the adapter so
@@ -23,8 +23,9 @@ MODDIR=${0%/*}
 FW_REL=rtlwifi/rtl8188eufw.bin          # path the kernel asks for, relative to /system/etc/firmware
 FW_SYS=/system/etc/firmware/$FW_REL     # kernel request_firmware() search path
 FW_VEN=/vendor/etc/firmware/$FW_REL     # fallback copy location (also searched)
-VID=0bda                                # Realtek
-PID=8179                                # RTL8188EUS (TL-WN722N v2/v3)
+# USB IDs of the adapter. v2/v3 units enumerate either as the generic Realtek
+# RTL8188EUS ID (0bda:8179) or as TP-Link's own pair (2357:010c).
+IDS="0bda:8179 2357:010c"
 
 # NOTE: /system/bin/log is called by full path on purpose; naming this
 # function "log" and calling "log" inside it would recurse forever.
@@ -38,10 +39,12 @@ find_adapter() {
     [ -f "$d/idVendor" ] || continue
     V=$(cat "$d/idVendor" 2>/dev/null)
     P=$(cat "$d/idProduct" 2>/dev/null)
-    if [ "$V" = "$VID" ] && [ "$P" = "$PID" ]; then
-      echo "${d%/}"
-      return 0
-    fi
+    for id in $IDS; do
+      if [ "$V:$P" = "$id" ]; then
+        echo "${d%/}"
+        return 0
+      fi
+    done
   done
   return 1
 }
@@ -120,7 +123,9 @@ reprobe_if_needed() {
   if [ -n "$DRV" ] && [ -d "/sys/bus/usb/drivers/$DRV" ]; then
     echo "$DEVNAME" > "/sys/bus/usb/drivers/$DRV/unbind" 2>/dev/null
     sleep 1
-    echo "$VID $PID" > "/sys/bus/usb/drivers/$DRV/bind" 2>/dev/null
+    V=$(cat "$ADAPTER/idVendor" 2>/dev/null)
+    P=$(cat "$ADAPTER/idProduct" 2>/dev/null)
+    echo "$V $P" > "/sys/bus/usb/drivers/$DRV/bind" 2>/dev/null
     sleep 2
     if adapter_if_up "$ADAPTER"; then log "driver rebind succeeded"; return 0; fi
   fi

@@ -1,12 +1,12 @@
 #!/system/bin/sh
-# nhwifi-check - diagnostic for TL-WN722N v2/v3 (RTL8188EUS, 0bda:8179)
+# nhwifi-check - diagnostic for TL-WN722N v2/v3 (RTL8188EUS)
+# The adapter may enumerate as generic Realtek 0bda:8179 or TP-Link 2357:010c.
 # Verifies that the firmware from the nh-magisk-wifi-firmware module is placed
 # where the kernel can load it, and whether the adapter actually came up.
 # Run as root:  nhwifi-check
 
 FW_REL=rtlwifi/rtl8188eufw.bin
-VID=0bda
-PID=8179
+IDS="0bda:8179 2357:010c"   # generic Realtek / TP-Link branded
 
 hr() { echo "------------------------------------------------------------"; }
 
@@ -42,20 +42,36 @@ for d in /sys/bus/usb/devices/*/; do
   [ -f "$d/idVendor" ] || continue
   V=$(cat "$d/idVendor" 2>/dev/null)
   P=$(cat "$d/idProduct" 2>/dev/null)
-  if [ "$V" = "$VID" ] && [ "$P" = "$PID" ]; then
-    ADAPTER="${d%/}"
-    break
-  fi
+  for id in $IDS; do
+    if [ "$V:$P" = "$id" ]; then
+      ADAPTER="${d%/}"
+      break 2
+    fi
+  done
 done
 
 if [ -z "$ADAPTER" ]; then
-  echo "[ .. ] TL-WN722N v2 (0bda:8179) not plugged in"
+  echo "[ .. ] TL-WN722N v2/v3 (RTL8188EUS) not plugged in"
+  echo "       Expected USB IDs: 0bda:8179 (generic) or 2357:010c (TP-Link)"
   echo "       Plug it in (ideally via OTG with external power) and re-run."
   echo "       If it never appears: phone lacks USB host support / OTG issue."
+  SEEN=""
+  for d in /sys/bus/usb/devices/*; do
+    [ -f "$d/idVendor" ] || continue
+    V=$(cat "$d/idVendor" 2>/dev/null)
+    case "$V" in
+      0bda|2357) SEEN="$SEEN $V:$(cat "$d/idProduct" 2>/dev/null)(${d##*/})" ;;
+    esac
+  done
+  if [ -n "$SEEN" ]; then
+    echo "       Realtek/TP-Link USB devices present:$SEEN"
+  fi
   exit 0
 fi
 DEVNAME=$(basename "$ADAPTER")
-echo "[ OK ] adapter found at /sys/bus/usb/devices/$DEVNAME"
+V=$(cat "$ADAPTER/idVendor" 2>/dev/null)
+P=$(cat "$ADAPTER/idProduct" 2>/dev/null)
+echo "[ OK ] adapter found at /sys/bus/usb/devices/$DEVNAME ($V:$P)"
 hr
 
 # 3) Did a driver bind and create an interface?
