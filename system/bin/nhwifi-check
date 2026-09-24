@@ -1,0 +1,99 @@
+#!/system/bin/sh
+# nhwifi-check - diagnostic for TL-WN722N v2/v3 (RTL8188EUS, 0bda:8179)
+# Verifies that the firmware from the nh-magisk-wifi-firmware module is placed
+# where the kernel can load it, and whether the adapter actually came up.
+# Run as root:  nhwifi-check
+
+FW_REL=rtlwifi/rtl8188eufw.bin
+VID=0bda
+PID=8179
+
+hr() { echo "------------------------------------------------------------"; }
+
+echo "== nh-magisk-wifi-firmware: TL-WN722N v2 check =="
+hr
+
+# 1) Firmware placement: the kernel drivers rtl8xxxu / r8188eu request
+#    exactly "rtlwifi/rtl8188eufw.bin" via request_firmware().
+FOUND=0
+for p in "/system/etc/firmware/$FW_REL" "/vendor/etc/firmware/$FW_REL"; do
+  if [ -f "$p" ]; then
+    echo "[ OK ] firmware at $p ($(wc -c < "$p") bytes)"
+    FOUND=1
+  fi
+done
+for base in /data/adb/modules/wirelessFirmware /data/adb/modules_update/wirelessFirmware; do
+  if [ -f "$base/system/etc/firmware/$FW_REL" ]; then
+    echo "[ OK ] module copy at $base/system/etc/firmware/$FW_REL"
+    FOUND=1
+  fi
+done
+if [ "$FOUND" = "0" ]; then
+  echo "[FAIL] $FW_REL not found anywhere - firmware cannot load"
+  echo "       Reinstall the wirelessFirmware module."
+  exit 1
+fi
+hr
+
+# 2) Adapter plugged in? USB devices live under port paths (e.g. 3-2), not
+#    "vid:pid" names, so scan idVendor/idProduct.
+ADAPTER=""
+for d in /sys/bus/usb/devices/*/; do
+  [ -f "$d/idVendor" ] || continue
+  V=$(cat "$d/idVendor" 2>/dev/null)
+  P=$(cat "$d/idProduct" 2>/dev/null)
+  if [ "$V" = "$VID" ] && [ "$P" = "$PID" ]; then
+    ADAPTER="${d%/}"
+    break
+  fi
+done
+
+if [ -z "$ADAPTER" ]; then
+  echo "[ .. ] TL-WN722N v2 (0bda:8179) not plugged in"
+  echo "       Plug it in (ideally via OTG with external power) and re-run."
+  echo "       If it never appears: phone lacks USB host support / OTG issue."
+  exit 0
+fi
+DEVNAME=$(basename "$ADAPTER")
+echo "[ OK ] adapter found at /sys/bus/usb/devices/$DEVNAME"
+hr
+
+# 3) Did a driver bind and create an interface?
+DRV=$(basename "$(readlink "$ADAPTER/driver" 2>/dev/null)" 2>/dev/null)
+IFACE=""
+for d in "$ADAPTER":*/net/*/; do
+  [ -d "$d" ] || continue
+  IFACE=$(basename "$d")
+  break
+done
+if [ -n "$DRV" ]; then
+  echo "[ OK ] driver bound: $DRV"
+else
+  echo "[FAIL] no driver bound to the device"
+fi
+if [ -n "$IFACE" ]; then
+  echo "[ OK ] interface created: $IFACE"
+else
+  echo "[FAIL] no network interface under $DEVNAME"
+fi
+hr
+
+# 4) Kernel log: firmware load errors are shown here verbatim.
+echo "Recent kernel messages (rtl8xxxu / r8188eu / firmware):"
+dmesg 2>/dev/null | grep -iE "8188|rtl8xxxu|r8188eu|firmware" | tail -n 20 \
+  || echo "(dmesg unavailable - run as root)"
+hr
+
+# 5) Verdict + next steps
+if [ -n "$IFACE" ]; then
+  echo "RESULT: adapter is up. iw dev / NetHunter should see $IFACE."
+  exit 0
+fi
+echo "RESULT: adapter detected but not working."
+echo "Checklist:"
+echo "  1. Kernel must support rtl8xxxu (or r8188eu) + USB host. This module"
+echo "     only provides firmware - it cannot add driver support."
+echo "  2. Reboot once after installing the module so service.sh re-probes."
+echo "  3. Firmware load errors above mean the file was not found: make sure"
+echo "     Magisk mounted the module (magisk --path; ls /data/adb/modules)."
+exit 1

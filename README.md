@@ -19,16 +19,50 @@ This module should work with any variant of Nethunter, but it was created to wor
 
 #### Supported adapters
 
-- TL-WN722N
+- TL-WN722N (v1, Atheros AR9271 - `htc_9271` firmware)
+- TL-WN722N v2/v3 (Realtek RTL8188EUS - `rtlwifi/rtl8188eufw.bin`, see below)
 - AWUS036NEH
 - TE-W322U
-- TL-WN722N-V2
 - Netgear_WN111v2
 - TL-WN821Nv3
 - (and many more. Check if chipset is listed above.)
 
+#### TL-WN722N v2/v3 notes (RTL8188EUS)
+
+The v2/v3 hardware uses a completely different chipset than v1 (Realtek RTL8188EUS,
+USB ID `0bda:8179`, vs the Atheros AR9271 in v1). It needs `rtlwifi/rtl8188eufw.bin`,
+which is the exact path requested by both kernel drivers that support it:
+
+- `rtl8xxxu` (mainline since 6.3, the driver NetHunter uses)
+- `r8188eu` (staging, kernels <= 6.2)
+
+Since v2.1.0 this module ships the **linux-firmware v28.0** build of this file
+(sha256 `2ff74315...`), which fixes monitor-mode issues with `rtl8xxxu` (see
+[linux-firmware commit b72c69dd](https://gitlab.com/kernel-firmware/linux-firmware/-/commit/b72c69dd542c4684ece8ac88ec1ba33364ec9365)).
+Older module releases shipped the 2013 v19 build, which breaks monitor mode on
+rtl8xxxu kernels.
+
+The module also installs a boot-time guard (`common/service.sh`) that:
+
+1. Verifies the firmware is visible in the kernel's `request_firmware()` search
+   path, and falls back to copying it into `/vendor/etc/firmware` if the Magisk
+   overlay was not mounted.
+2. If the adapter is plugged in but failed to get its firmware earlier in boot,
+   re-probes it (drivers_probe / re-authorize / driver rebind) so it comes up
+   without a manual replug.
+
+To diagnose problems, run `nhwifi-check` (root shell) after plugging the adapter
+in - it verifies placement, driver binding, and shows recent kernel log lines.
+
 
 #### Changelog
+
+* v2.1.0
+    - TL-WN722N v2/v3: updated rtl8188eufw.bin to linux-firmware v28.0 (fixes rtl8xxxu monitor mode)
+    - Added boot-time guard (service.sh) ensuring firmware placement + adapter re-probe
+    - Added /vendor/etc/firmware fallback copy of rtl8188eufw.bin
+    - Added nhwifi-check diagnostic script (/system/bin/nhwifi-check)
+    - Installer now verifies firmware presence at install time
 
 * v2.0.4
     - Added files for RTL8812BU, RTL8822BU, BRCM4335, BRCM4339, BRCM4354

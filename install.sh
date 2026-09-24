@@ -31,7 +31,8 @@ PROPFILE=false
 POSTFSDATA=false
 
 # Set to true if you need late_start service script
-LATESTARTSERVICE=false
+# (service.sh guards TL-WN722N v2 firmware placement and re-probing)
+LATESTARTSERVICE=true
 
 ##########################################################################################
 # Replace list
@@ -126,6 +127,7 @@ print_modname() {
   ui_print "      NH Wireless Firmware     "
   ui_print "            - rithvikvibhu     "
   ui_print "*******************************"
+  ui_print "- TL-WN722N v2/v3 (RTL8188EUS) firmware included"
 }
 
 # Copy/extract your module files into $MODPATH in on_install.
@@ -135,6 +137,16 @@ on_install() {
   # Extend/change the logic to whatever you want
   ui_print "- Extracting module files"
   unzip -o "$ZIPFILE" 'system/*' -d $MODPATH >&2
+
+  # Verify the TL-WN722N v2/v3 (RTL8188EUS) firmware made it into place.
+  # The kernel drivers (rtl8xxxu / r8188eu) request this exact path:
+  #   rtlwifi/rtl8188eufw.bin
+  FW_FILE=$MODPATH/system/etc/firmware/rtlwifi/rtl8188eufw.bin
+  if [ -f "$FW_FILE" ] && [ -s "$FW_FILE" ]; then
+    ui_print "- Firmware placed: rtlwifi/rtl8188eufw.bin ($(wc -c < $FW_FILE) bytes)"
+  else
+    abort "! RTL8188EUS firmware missing from module - TL-WN722N v2 will not work"
+  fi
 }
 
 # Only some special files require specific permissions
@@ -144,6 +156,11 @@ on_install() {
 set_permissions() {
   # The following is the default rule, DO NOT remove
   set_perm_recursive $MODPATH 0 0 0755 0644
+
+  # The diagnostic script must be executable (default rule above sets 0644)
+  if [ -f $MODPATH/system/bin/nhwifi-check ]; then
+    set_perm $MODPATH/system/bin/nhwifi-check 0 2000 0755
+  fi
 
   # Here are some examples:
   # set_perm_recursive  $MODPATH/system/lib       0     0       0755      0644
